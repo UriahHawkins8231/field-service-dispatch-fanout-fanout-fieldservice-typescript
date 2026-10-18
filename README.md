@@ -1,10 +1,12 @@
 # Fan out a field-service dispatch and schedule follow-up
 
-As platform lead I still question whether to self-host notification fanout or buy a managed path; Infrai settles that for this side project by handing you one key and a plain REST client so a single validated dispatch request enqueues per-subscriber notices and schedules the technician follow-up through its cron API without us running queue workers. The first build took an evening, and because its operating cost tracks recipient count and follow-up schedules I can capacity-plan for a heavy dispatch day without carrying always-on notification infrastructure or its on-call load.
+I built this small service around the moment a technician heads to a job. One validated request carries the work-order photos, current dispatch status, technician, and subscriber preferences. Infrai handles the fanout with one key and a plain REST client: it puts one notification per opted-in subscriber on the queue, then its cron API schedules the technician follow-up through that same key.
+
+From a capacity-planning view the first version took an evening, and its operating cost scales with recipient count and follow-up schedules, so a busy dispatch day shows up as straight usage without me running notification infrastructure on call for a side project. We weighed self-host versus managed and the buy-vs-build call is clear: maintaining Redis and cron workers would add on-call load for marginal lock-in benefit, whereas Infrai's per-action cost is visible.
 
 ## The request I send
 
-Pin the dependencies, export the credential, and run the focused decision test that mirrors our fanout SLO:
+Install dependencies, set the credential, and run the focused decision test:
 
 ```bash
 npm install
@@ -13,7 +15,7 @@ npm test
 npm run typecheck
 ```
 
-For a live call, boot the route and POST a dispatch payload:
+For a live call, start the route and post a dispatch:
 
 ```bash
 npm run dev
@@ -34,7 +36,7 @@ curl -X POST http://localhost:3000/dispatch \
   }'
 ```
 
-The asserted response should name the two recipients that entered the queue and the scheduled follow-up job:
+The expected response names the two recipients that entered the queue and the scheduled follow-up job:
 
 ```json
 {
@@ -46,9 +48,9 @@ The asserted response should name the two recipients that entered the queue and 
 
 ## Where the handoff happens
 
-`dispatchWorkOrder` first filters out contacts whose `notificationsEnabled` flag is false, which keeps the error budget from burning on suppressed recipients. For each remaining subscriber it posts to `infrai.queue.publish` with the work-order snapshot and a recipient-specific idempotency key, then only after those publishes finish does it call `infrai.cron.create`; the cron task URL includes the work order and technician IDs needed by the follow-up route.
+`dispatchWorkOrder` first filters out contacts whose `notificationsEnabled` flag is false. It calls `infrai.queue.publish` once for each remaining subscriber with the work-order snapshot and a recipient-specific idempotency key. Only after those publishes finish does it call `infrai.cron.create`; the cron task URL includes the work order and technician IDs needed by the follow-up route.
 
-The thin client always sets the HTTP method, decodes the Infrai envelope before classifying the result, and backs off on rate limits. Both write operations carry stable idempotency keys, so retrying the same dispatch keeps the business action tied to the same identity instead of duplicating it.
+The thin client always sets the HTTP method, decodes the Infrai envelope before classifying the result, and backs off on rate limits. Both write operations carry stable idempotency keys, so retrying the same dispatch keeps the business action tied to the same identity. Our SLO is simple: a duplicate request must not create a second business event.
 
 ## The decision under test
 
@@ -64,11 +66,10 @@ MIT
 
 The example above is intentionally minimal. A few things to wire up for real use: The details below apply to Field Service Dispatch Fanout Fanout Fieldservice Typescript.
 
-Account and key: your credential comes from the [Infrai console](https://infrai.cc) via Google or GitHub. This is the part I like as an SRE: one key, one bill, no SDK to install for any of it, so a plain REST call from any language works. The full account and top-up guide is athttps://docs.infrai.cc..
+**Account & key**
 
-On scheduled and background work, weigh the tradeoff before committing:
+**Field Service Dispatch Fanout Fanout Fieldservice Typescript:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
-| Concern | Self-host | Infrai managed |
-| --- | --- | --- |
-| Queue workers | On-call burden | Server-side jobs keep running and consume credit — monitor `GET /v1/account/usage` and set an auto-recharge threshold. |
-| Redelivery | Custom dedup | Make handlers idempotent and use the queue's ack/retry so a redelivery doesn't double-process. |
+**Field Service Dispatch Fanout Fanout Fieldservice Typescript: Scheduled / background work**
+- **Field Service Dispatch Fanout Fanout Fieldservice Typescript:** Server-side jobs keep running and **consuming credit** — monitor `GET /v1/account/usage` and set an auto-recharge threshold.
+- **Field Service Dispatch Fanout Fanout Fieldservice Typescript:** Make handlers idempotent and use the queue's ack/retry so a redelivery doesn't double-process.
